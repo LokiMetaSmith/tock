@@ -10,6 +10,8 @@
 #![deny(missing_docs)]
 
 use capsules::virtual_aes_ccm::MuxAES128CCM;
+use capsules::virtual_alarm::VirtualMuxAlarm;
+
 use kernel::capabilities;
 use kernel::common::dynamic_deferred_call::{DynamicDeferredCall, DynamicDeferredCallClientState};
 use kernel::component::Component;
@@ -17,6 +19,7 @@ use kernel::hil::gpio::Interrupt;
 use kernel::hil::i2c::I2CMaster;
 use kernel::hil::led::LedHigh;
 use kernel::hil::symmetric_encryption::AES128;
+use kernel::hil::time::Alarm;
 use kernel::hil::time::Counter;
 use kernel::hil::usb::Client;
 use kernel::mpu::MPU;
@@ -32,6 +35,9 @@ const LED_RED_PIN: Pin = Pin::P1_01;
 const LED_WHITE_PIN: Pin = Pin::P0_10;
 
 const LED_KERNEL_PIN: Pin = Pin::P1_01;
+
+// Speaker
+const SPEAKER_PIN: Pin = Pin::P1_00;
 
 // Buttons
 const BUTTON_LEFT: Pin = Pin::P1_02;
@@ -119,6 +125,12 @@ pub struct Platform {
         'static,
         capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52::rtc::Rtc<'static>>,
     >,
+    buzzer: &'static capsules::buzzer_driver::Buzzer<
+        'static,
+        capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52840::rtc::Rtc<'static>>,
+    >,
+    temperature: &'static capsules::temperature::TemperatureSensor<'static>,
+    humidity: &'static capsules::humidity::HumiditySensor<'static>,
 }
 
 impl kernel::Platform for Platform {
@@ -137,7 +149,10 @@ impl kernel::Platform for Platform {
             capsules::rng::DRIVER_NUM => f(Some(self.rng)),
             capsules::ble_advertising_driver::DRIVER_NUM => f(Some(self.ble_radio)),
             capsules::ieee802154::DRIVER_NUM => f(Some(self.ieee802154_radio)),
+            capsules::buzzer_driver::DRIVER_NUM => f(Some(self.buzzer)),
             kernel::ipc::DRIVER_NUM => f(Some(&self.ipc)),
+            capsules::temperature::DRIVER_NUM => f(Some(self.temperature)),
+            capsules::humidity::DRIVER_NUM => f(Some(self.humidity)),
             _ => f(None),
         }
     }
@@ -266,6 +281,41 @@ pub unsafe fn reset_handler() {
         .finalize(components::alarm_component_helper!(nrf52::rtc::Rtc));
 
     //--------------------------------------------------------------------------
+    // PWM & BUZZER
+    //--------------------------------------------------------------------------
+
+    let mux_pwm = static_init!(
+        capsules::virtual_pwm::MuxPwm<'static, nrf52840::pwm::Pwm>,
+        capsules::virtual_pwm::MuxPwm::new(&nrf52840::pwm::PWM0)
+    );
+    let virtual_pwm_buzzer = static_init!(
+        capsules::virtual_pwm::PwmPinUser<'static, nrf52840::pwm::Pwm>,
+        capsules::virtual_pwm::PwmPinUser::new(
+            mux_pwm,
+            nrf52840::pinmux::Pinmux::new(SPEAKER_PIN as u32)
+        )
+    );
+    virtual_pwm_buzzer.add_to_mux();
+
+    let virtual_alarm_buzzer = static_init!(
+        capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52840::rtc::Rtc>,
+        capsules::virtual_alarm::VirtualMuxAlarm::new(mux_alarm)
+    );
+    let buzzer = static_init!(
+        capsules::buzzer_driver::Buzzer<
+            'static,
+            capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52840::rtc::Rtc>,
+        >,
+        capsules::buzzer_driver::Buzzer::new(
+            virtual_pwm_buzzer,
+            virtual_alarm_buzzer,
+            capsules::buzzer_driver::DEFAULT_MAX_BUZZ_TIME_MS,
+            board_kernel.create_grant(&memory_allocation_capability)
+        )
+    );
+    virtual_alarm_buzzer.set_alarm_client(buzzer);
+
+    //--------------------------------------------------------------------------
     // UART & CONSOLE & DEBUG
     //--------------------------------------------------------------------------
 
@@ -322,17 +372,17 @@ pub unsafe fn reset_handler() {
 
     let sensors_i2c_bus = static_init!(
         capsules::virtual_i2c::MuxI2C<'static>,
-        capsules::virtual_i2c::MuxI2C::new(&base_peripherals.twim0, None, dynamic_deferred_caller)
+        capsules::virtual_i2c::MuxI2C::new(&base_peripherals.twim1, None, dynamic_deferred_caller)
     );
-    base_peripherals.twim0.configure(
+    base_peripherals.twim1.configure(
         nrf52840::pinmux::Pinmux::new(I2C_SCL_PIN as u32),
         nrf52840::pinmux::Pinmux::new(I2C_SDA_PIN as u32),
     );
-    base_peripherals.twim0.set_master_client(sensors_i2c_bus);
+    base_peripherals.twim1.set_master_client(sensors_i2c_bus);
 
     let apds9960_i2c = static_init!(
         capsules::virtual_i2c::I2CDevice,
-        capsules::virtual_i2c::I2CDevice::new(sensors_i2c_bus, 0x39 << 1)
+        capsules::virtual_i2c::I2CDevice::new(sensors_i2c_bus, 0x39)
     );
 
     let apds9960 = static_init!(
@@ -354,6 +404,15 @@ pub unsafe fn reset_handler() {
     );
 
     kernel::hil::sensors::ProximityDriver::set_client(apds9960, proximity);
+
+    let sht3x = components::sht3x::SHT3xComponent::new(sensors_i2c_bus, mux_alarm).finalize(
+        components::sht3x_component_helper!(nrf52::rtc::Rtc<'static>, capsules::sht3x::BASE_ADDR),
+    );
+
+    let temperature =
+        components::temperature::TemperatureComponent::new(board_kernel, sht3x).finalize(());
+
+    let humidity = components::humidity::HumidityComponent::new(board_kernel, sht3x).finalize(());
 
     //--------------------------------------------------------------------------
     // TFT
@@ -459,8 +518,11 @@ pub unsafe fn reset_handler() {
         screen: screen,
         button: button,
         rng: rng,
+        buzzer: buzzer,
         alarm: alarm,
         ipc: kernel::ipc::IPC::new(board_kernel, &memory_allocation_capability),
+        temperature: temperature,
+        humidity: humidity,
     };
 
     let chip = static_init!(
