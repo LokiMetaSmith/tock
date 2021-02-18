@@ -25,7 +25,7 @@ flash: $(TOCK_ROOT_DIRECTORY)target/$(TARGET)/release/$(PLATFORM).bin
 # Upload the kernel over JTAG using OpenOCD
 .PHONY: flash-openocd
 flash-openocd: $(TOCK_ROOT_DIRECTORY)target/$(TARGET)/release/$(PLATFORM).bin
-	$(TOCKLOADER) $(TOCKLOADER_GENERAL_FLAGS) flash --address $(KERNEL_ADDRESS) --board nrf52dk  --openocd-commands 'jtag_rclk 4000' --openocd $<
+	$(TOCKLOADER) $(TOCKLOADER_GENERAL_FLAGS) flash --address $(KERNEL_ADDRESS) --board nrf52dk  --openocd-commands 'adapter speed 1000' --openocd $<
 
 # Upload the kernel over serial/bootloader
 .PHONY: program

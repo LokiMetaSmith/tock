@@ -28,6 +28,7 @@ members = [
     "boards/stm32f412gdiscovery",
     "boards/teensy40",
     "boards/nano33ble",
+    "boards/opossom-pouch",
     "capsules",
     "chips/apollo3",
     "chips/arty_e21_chip",
