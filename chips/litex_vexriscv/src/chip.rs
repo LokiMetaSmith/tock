@@ -6,8 +6,8 @@ use kernel::debug;
 use kernel::hil::time::Alarm;
 use kernel::InterruptService;
 use rv32i::csr::{mcause, mie::mie, CSR};
+use rv32i::pmp::PMP;
 use rv32i::syscall::SysCall;
-use rv32i::PMPConfigMacro;
 
 use crate::interrupt_controller::VexRiscvInterruptController;
 
@@ -15,14 +15,14 @@ use crate::interrupt_controller::VexRiscvInterruptController;
 /// accessible to the raw interrupt handler functions
 static mut INTERRUPT_CONTROLLER: VexRiscvInterruptController = VexRiscvInterruptController::new();
 
-// TODO: Actually implement the PMP
-PMPConfigMacro!(4);
-
+// The VexRiscv "Secure" variant of
+// [pythondata-cpu-vexriscv](https://github.com/litex-hub/pythondata-cpu-vexriscv)
+// has 16 PMP slots
 pub struct LiteXVexRiscv<A: 'static + Alarm<'static>, I: 'static + InterruptService<()>> {
     soc_identifier: &'static str,
     userspace_kernel_boundary: SysCall,
     interrupt_controller: &'static VexRiscvInterruptController,
-    _pmp: PMP,
+    pmp: PMP<16, 8>,
     scheduler_timer: kernel::VirtualSchedulerTimer<A>,
     interrupt_service: &'static I,
 }
@@ -37,7 +37,7 @@ impl<A: 'static + Alarm<'static>, I: 'static + InterruptService<()>> LiteXVexRis
             soc_identifier,
             userspace_kernel_boundary: SysCall::new(),
             interrupt_controller: &INTERRUPT_CONTROLLER,
-            _pmp: PMP::new(),
+            pmp: PMP::new(),
             scheduler_timer: kernel::VirtualSchedulerTimer::new(alarm),
             interrupt_service,
         }
@@ -60,15 +60,13 @@ impl<A: 'static + Alarm<'static>, I: 'static + InterruptService<()>> LiteXVexRis
 impl<A: 'static + Alarm<'static>, I: 'static + InterruptService<()>> kernel::Chip
     for LiteXVexRiscv<A, I>
 {
-    // type MPU = PMP;
-    type MPU = ();
+    type MPU = PMP<16, 8>;
     type UserspaceKernelBoundary = SysCall;
     type SchedulerTimer = kernel::VirtualSchedulerTimer<A>;
     type WatchDog = ();
 
     fn mpu(&self) -> &Self::MPU {
-        //&self.pmp
-        &()
+        &self.pmp
     }
 
     fn scheduler_timer(&self) -> &Self::SchedulerTimer {
@@ -204,7 +202,7 @@ pub unsafe extern "C" fn start_trap_rust() {
 /// interrupt that fired so that it does not trigger again.
 #[export_name = "_disable_interrupt_trap_rust_from_app"]
 pub unsafe extern "C" fn disable_interrupt_trap_handler(mcause_val: u32) {
-    match mcause::Trap::from(mcause_val) {
+    match mcause::Trap::from(mcause_val as usize) {
         mcause::Trap::Interrupt(interrupt) => {
             handle_interrupt(interrupt);
         }

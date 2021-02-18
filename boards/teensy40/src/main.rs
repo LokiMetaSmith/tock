@@ -34,7 +34,7 @@ struct Teensy40 {
     led:
         &'static capsules::led::LedDriver<'static, LedHigh<'static, imxrt1060::gpio::Pin<'static>>>,
     console: &'static capsules::console::Console<'static>,
-    ipc: kernel::ipc::IPC,
+    ipc: kernel::ipc::IPC<NUM_PROCS>,
     alarm: &'static capsules::alarm::AlarmDriver<
         'static,
         capsules::virtual_alarm::VirtualMuxAlarm<'static, imxrt1060::gpt::Gpt1<'static>>,
@@ -227,7 +227,7 @@ pub unsafe fn reset_handler() {
 #[no_mangle]
 #[link_section = ".stack_buffer"]
 #[used]
-static mut STACK_BUFFER: [u8; 0x1000] = [0; 0x1000];
+static mut STACK_BUFFER: [u8; 0x2000] = [0; 0x2000];
 
 const FCB_SIZE: usize = core::mem::size_of::<fcb::FCB>();
 
