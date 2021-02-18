@@ -25,17 +25,17 @@ macro_rules! led_component_helper {
         use kernel::static_init;
         const NUM_LEDS: usize = count_expressions!($($L),+);
 
-	static_init!(
-	    [&'static mut $Led; NUM_LEDS],
-	    [
-		$(
-		    static_init!(
-			$Led,
-			$L
-		    )
-		),+
-	    ]
-	)
+        static_init!(
+            [&'static $Led; NUM_LEDS],
+            [
+                $(
+                    static_init!(
+                        $Led,
+                        $L
+                    )
+                ),+
+            ]
+        )
     };};
 }
 
@@ -50,11 +50,11 @@ macro_rules! led_component_buf {
 }
 
 pub struct LedsComponent<L: 'static + Led> {
-    leds: &'static mut [&'static mut L],
+    leds: &'static mut [&'static L],
 }
 
 impl<L: 'static + Led> LedsComponent<L> {
-    pub fn new(leds: &'static mut [&'static mut L]) -> Self {
+    pub fn new(leds: &'static mut [&'static L]) -> Self {
         Self { leds }
     }
 }

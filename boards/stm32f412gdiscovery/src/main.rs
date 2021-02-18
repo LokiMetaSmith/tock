@@ -47,7 +47,7 @@ pub static mut STACK_MEMORY: [u8; 0x2000] = [0; 0x2000];
 /// capsules for this platform.
 struct STM32F412GDiscovery {
     console: &'static capsules::console::Console<'static>,
-    ipc: kernel::ipc::IPC,
+    ipc: kernel::ipc::IPC<NUM_PROCS>,
     led:
         &'static capsules::led::LedDriver<'static, LedLow<'static, stm32f412g::gpio::Pin<'static>>>,
     button: &'static capsules::button::Button<'static, stm32f412g::gpio::Pin<'static>>,
@@ -57,7 +57,6 @@ struct STM32F412GDiscovery {
     >,
     gpio: &'static capsules::gpio::GPIO<'static, stm32f412g::gpio::Pin<'static>>,
     adc: &'static capsules::adc::AdcVirtualized<'static>,
-    ft6x06: &'static capsules::ft6x06::Ft6x06<'static>,
     touch: &'static capsules::touch::Touch<'static>,
     screen: &'static capsules::screen::Screen<'static>,
     temperature: &'static capsules::temperature::TemperatureSensor<'static>,
@@ -78,7 +77,6 @@ impl Platform for STM32F412GDiscovery {
             kernel::ipc::DRIVER_NUM => f(Some(&self.ipc)),
             capsules::gpio::DRIVER_NUM => f(Some(self.gpio)),
             capsules::adc::DRIVER_NUM => f(Some(self.adc)),
-            capsules::ft6x06::DRIVER_NUM => f(Some(self.ft6x06)),
             capsules::touch::DRIVER_NUM => f(Some(self.touch)),
             capsules::screen::DRIVER_NUM => f(Some(self.screen)),
             capsules::temperature::DRIVER_NUM => f(Some(self.temperature)),
@@ -728,7 +726,6 @@ pub unsafe fn reset_handler() {
         alarm: alarm,
         gpio: gpio,
         adc: adc_syscall,
-        ft6x06: ft6x06,
         touch: touch,
         screen: screen,
         temperature: temp,
