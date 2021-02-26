@@ -8,16 +8,26 @@
 #![cfg_attr(not(doc), no_main)]
 #![deny(missing_docs)]
 
-use kernel::capabilities;
+use capsules::virtual_aes_ccm::MuxAES128CCM;
+use capsules::virtual_alarm::VirtualMuxAlarm;
 use kernel::common::dynamic_deferred_call::{DynamicDeferredCall, DynamicDeferredCallClientState};
 use kernel::component::Component;
+use kernel::hil::gpio::Configure;
+use kernel::hil::gpio::Interrupt;
+use kernel::hil::gpio::Output;
+//use kernel::hil::i2c::I2CMaster;
+use kernel::hil::led::LedHigh;
+use kernel::hil::symmetric_encryption::AES128;
 use kernel::hil::time::Counter;
-
+use kernel::hil::usb::Client;
+use kernel::mpu::MPU;
+use kernel::Chip;
 #[allow(unused_imports)]
-use kernel::{create_capability, debug, debug_gpio, debug_verbose, static_init};
-
+use kernel::{capabilities, create_capability, debug, debug_gpio, debug_verbose, static_init};
 use nrf52833::gpio::Pin;
+use nrf52833::base_interrupts::PWM0;
 use nrf52833::interrupt_service::Nrf52833DefaultPeripherals;
+use nrf52_components::{self, UartChannel, UartPins};
 
 // Kernel LED (same as microphone LED)
 const LED_KERNEL_PIN: Pin = Pin::P0_24;
@@ -44,6 +54,9 @@ const IMON: Pin = Pin::P0_02;
 
 const UART_TX_PIN: Pin = Pin::P0_25;
 const UART_RX_PIN: Pin = Pin::P0_21;
+
+const SRC_MAC: u16 = 0xDEAD;
+const PAN_ID:  u16 = 0xBEEF;
 
 /// LED matrix
 //const LED_MATRIX_COLS: [Pin; 5] = [Pin::P0_28, Pin::P0_11, Pin::P0_31, Pin::P1_05, Pin::P0_30];
@@ -75,32 +88,44 @@ static mut CHIP: Option<&'static nrf52833::chip::NRF52<Nrf52833DefaultPeripheral
 /// Dummy buffer that causes the linker to reserve enough space for the stack.
 #[no_mangle]
 #[link_section = ".stack_buffer"]
-pub static mut STACK_MEMORY: [u8; 0x1500] = [0; 0x1500];
+pub static mut STACK_MEMORY: [u8; 0x1000] = [0; 0x1000];
+// debug mode requires more stack space
+// pub static mut STACK_MEMORY: [u8; 0x2000] = [0; 0x2000];
 
 /// Supported drivers by the platform
 pub struct Platform {
     ble_radio: &'static capsules::ble_advertising_driver::BLE<
         'static,
-        nrf52::ble_radio::Radio<'static>,
-        capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52::rtc::Rtc<'static>>,
+        nrf52833::ble_radio::Radio<'static>,
+        VirtualMuxAlarm<'static, nrf52::rtc::Rtc<'static>>,
+    >,
+    pconsole: &'static capsules::process_console::ProcessConsole<
+        'static,
+        components::process_console::Capability,
     >,
     console: &'static capsules::console::Console<'static>,
-    gpio: &'static capsules::gpio::GPIO<'static, nrf52::gpio::GPIOPin<'static>>,
-    led: &'static capsules::led::led<'static, nrf52::gpio::GPIOPin<'static>>,
-
+    gpio: &'static capsules::gpio::GPIO<'static, nrf52833::gpio::GPIOPin<'static>>,
+    led: &'static capsules::led::LedDriver<
+        'static,
+        LedHigh<'static, nrf52833::gpio::GPIOPin<'static>>,
+    >,
     button: &'static capsules::button::Button<'static, nrf52::gpio::GPIOPin<'static>>,
     rng: &'static capsules::rng::RngDriver<'static>,
     //ninedof: &'static capsules::ninedof::NineDof<'static>,
     //lsm303agr: &'static capsules::lsm303agr::Lsm303agrI2C<'static>,
-    //temperature: &'static capsules::temperature::TemperatureSensor<'static>,
-    ipc: kernel::ipc::IPC,
+    temperature: &'static capsules::temperature::TemperatureSensor<'static>,
+    ipc: kernel::ipc::IPC<NUM_PROCS>,
     adc: &'static capsules::adc::AdcVirtualized<'static>,
+    analog_comparator: &'static capsules::analog_comparator::AnalogComparator<
+        'static,
+        nrf52833::acomp::Comparator<'static>,
+    >,
     alarm: &'static capsules::alarm::AlarmDriver<
         'static,
-        capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52::rtc::Rtc<'static>>,
+        capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52833::rtc::Rtc<'static>>,
     >,
-//        'static,
 //    buzzer: &'static capsules::buzzer_driver::Buzzer<
+//        'static,
 //        capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52833::rtc::Rtc<'static>>,
 //    >,
     app_flash: &'static capsules::app_flash_driver::AppFlash<'static>,
@@ -117,13 +142,11 @@ impl kernel::Platform for Platform {
             capsules::alarm::DRIVER_NUM => f(Some(self.alarm)),
             capsules::button::DRIVER_NUM => f(Some(self.button)),
             capsules::led::DRIVER_NUM => f(Some(self.led)),
-//            capsules::ninedof::DRIVER_NUM => f(Some(self.ninedof)),
+            capsules::analog_comparator::DRIVER_NUM => f(Some(self.analog_comparator)),
             capsules::adc::DRIVER_NUM => f(Some(self.adc)),
-            //capsules::temperature::DRIVER_NUM => f(Some(self.temperature)),
-            //capsules::lsm303agr::DRIVER_NUM => f(Some(self.lsm303agr)),
+            capsules::temperature::DRIVER_NUM => f(Some(self.temperature)),
             capsules::rng::DRIVER_NUM => f(Some(self.rng)),
             capsules::ble_advertising_driver::DRIVER_NUM => f(Some(self.ble_radio)),
-            //capsules::buzzer_driver::DRIVER_NUM => f(Some(self.buzzer)),
             capsules::app_flash_driver::DRIVER_NUM => f(Some(self.app_flash)),
             kernel::ipc::DRIVER_NUM => f(Some(&self.ipc)),
             _ => f(None),
@@ -136,6 +159,7 @@ impl kernel::Platform for Platform {
 pub unsafe fn reset_handler() {
     // Loads relocations and clears BSS
     nrf52833::init();
+
     let ppi = static_init!(nrf52833::ppi::Ppi, nrf52833::ppi::Ppi::new());
     // Initialize chip peripheral drivers
     let nrf52833_peripherals = static_init!(
@@ -145,7 +169,6 @@ pub unsafe fn reset_handler() {
 
     // set up circular peripheral dependencies
     nrf52833_peripherals.init();
-
     let base_peripherals = &nrf52833_peripherals.nrf52;
 
     let board_kernel = static_init!(kernel::Kernel, kernel::Kernel::new(&PROCESSES));
@@ -160,7 +183,7 @@ pub unsafe fn reset_handler() {
         create_capability!(capabilities::ProcessManagementCapability);
     let main_loop_capability = create_capability!(capabilities::MainLoopCapability);
     let memory_allocation_capability = create_capability!(capabilities::MemoryAllocationCapability);
-
+    let gpio_port = &nrf52833_peripherals.gpio_port;
     //--------------------------------------------------------------------------
     // DEBUG GPIO
     //--------------------------------------------------------------------------
@@ -169,7 +192,7 @@ pub unsafe fn reset_handler() {
     // `debug_gpio!(0, toggle)` macro. We uconfigure these early so that the
     // macro is available during most of the setup code and kernel exection.
     kernel::debug::assign_gpios(
-        Some(&base_peripherals.gpio_port[LED_KERNEL_PIN]),
+        Some(&nrf52833_peripherals.gpio_port[LED_KERNEL_PIN]),
         None,
         None,
     );
@@ -183,12 +206,16 @@ pub unsafe fn reset_handler() {
         components::gpio_component_helper!(
             nrf52833::gpio::GPIOPin,
             // Used as ADC, comment them out in the ADC section to use them as GPIO
-            // 0 => &base_peripherals.gpio_port[GPIO_P0],
-            // 1 => &base_peripherals.gpio_port[_GPIO_P1],
-            // 2 => &base_peripherals.gpio_port[_GPIO_P2],
-            //7 => &base_peripherals.gpio_port[SWITCH],
-            //9 => &base_peripherals.gpio_port[GPIO_P9],
-            //16 => &base_peripherals.gpio_port[GPIO_P16],
+            // 0 => &nrf52833_peripherals.gpio_port[Pin::P0_0],
+            // 1 => &nrf52833_peripherals.gpio_port[Pin::P0_1],
+            // 2 => &nrf52833_peripherals.gpio_port[Pin::P0_2],
+	        11 => &nrf52833_peripherals.gpio_port[Pin::P0_11],
+            13 => &nrf52833_peripherals.gpio_port[Pin::P0_13],
+            16 => &nrf52833_peripherals.gpio_port[Pin::P0_16],
+            14 => &nrf52833_peripherals.gpio_port[Pin::P0_14],
+            //8 => &nrf52833_peripherals.gpio_port[Pin::P0_8],
+            //9 => &nrf52833_peripherals.gpio_port[Pin::P0_9],
+            //16 => &nrf52833_peripherals.gpio_port[Pin::P0_16],
         ),
     )
     .finalize(components::gpio_component_buf!(nrf52833::gpio::GPIOPin));
@@ -201,10 +228,10 @@ pub unsafe fn reset_handler() {
         components::button_component_helper!(
             nrf52833::gpio::GPIOPin,
             (
-                &base_peripherals.gpio_port[SWITCH],
+                &nrf52833_peripherals.gpio_port[SWITCH],
                 kernel::hil::gpio::ActivationMode::ActiveLow,
-                kernel::hil::gpio::FloatingState::PullHigh
-            ), // Touch Logo
+                kernel::hil::gpio::FloatingState::PullUp
+            )
         ),
     )
     .finalize(components::button_component_buf!(nrf52833::gpio::GPIOPin));
@@ -227,7 +254,6 @@ pub unsafe fn reset_handler() {
 
     let rtc = &base_peripherals.rtc;
     rtc.start();
-
     let mux_alarm = components::alarm::AlarmMuxComponent::new(rtc)
         .finalize(components::alarm_mux_component_helper!(nrf52::rtc::Rtc));
     let alarm = components::alarm::AlarmDriverComponent::new(board_kernel, mux_alarm)
@@ -240,28 +266,11 @@ pub unsafe fn reset_handler() {
     use kernel::hil::time::Alarm;
 
     let mux_pwm = static_init!(
-        capsules::virtual_pwm::MuxPwm<'static, nrf52833::pwm::Pwm>,
-        capsules::virtual_pwm::MuxPwm::new(&nrf52833::pwm::PWM0)
+        capsules::virtual_pwm::MuxPwm<'static, nrf52::pwm::Pwm>,
+        capsules::virtual_pwm::MuxPwm::new(&base_peripherals.pwm0)
     );
 
 
-    let virtual_alarm_buzzer = static_init!(
-        capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52833::rtc::Rtc>,
-        capsules::virtual_alarm::VirtualMuxAlarm::new(mux_alarm)
-    );
-    let buzzer = static_init!(
-        capsules::buzzer_driver::Buzzer<
-            'static,
-            capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52833::rtc::Rtc>,
-        >,
-        capsules::buzzer_driver::Buzzer::new(
-            virtual_pwm_buzzer,
-            virtual_alarm_buzzer,
-            capsules::buzzer_driver::DEFAULT_MAX_BUZZ_TIME_MS,
-            board_kernel.create_grant(&memory_allocation_capability)
-        )
-    );
-    virtual_alarm_buzzer.set_alarm_client(buzzer);
 
     //--------------------------------------------------------------------------
     // UART & CONSOLE & DEBUG
@@ -296,7 +305,8 @@ pub unsafe fn reset_handler() {
     //--------------------------------------------------------------------------
     // SENSORS
     //--------------------------------------------------------------------------
-//--------------------------------------------------------------------------
+    let temperature = components::temperature::TemperatureComponent::new(board_kernel, &base_peripherals.temp).finalize(());
+    //--------------------------------------------------------------------------
     // ADC
     //--------------------------------------------------------------------------
     base_peripherals.adc.calibrate();
@@ -308,17 +318,40 @@ pub unsafe fn reset_handler() {
     let adc_syscall = components::adc::AdcVirtualComponent::new(board_kernel).finalize(
         components::adc_syscall_component_helper!(
             // ADC Ring 0 (P0)
-            components::adc::AdcComponent::new(&adc_mux, nrf52833::adc::AdcChannel::AnalogInput0)
-                .finalize(components::adc_component_helper!(nrf52833::adc::Adc)),
+            //components::adc::AdcComponent::new(
+            //    &adc_mux,
+            //    nrf52833::adc::AdcChannel::AnalogInput0
+            //)
+            //.finalize(components::adc_component_helper!(nrf52833::adc::Adc)),
+            components::adc::AdcComponent::new(
+                &adc_mux,
+                nrf52833::adc::AdcChannelSetup::new(nrf52833::adc::AdcChannel::AnalogInput0)
+            )
+            .finalize(components::adc_component_helper!(nrf52833::adc::Adc)),
             // ADC Ring 1 (P1)
-            components::adc::AdcComponent::new(&adc_mux, nrf52833::adc::AdcChannel::AnalogInput1)
-                .finalize(components::adc_component_helper!(nrf52833::adc::Adc)),
+            components::adc::AdcComponent::new(
+                &adc_mux,
+                nrf52833::adc::AdcChannelSetup::new(nrf52833::adc::AdcChannel::AnalogInput1)
+            )
+            .finalize(components::adc_component_helper!(nrf52833::adc::Adc)),
             // ADC Ring 2 (P2)
-            components::adc::AdcComponent::new(&adc_mux, nrf52833::adc::AdcChannel::AnalogInput2)
-                .finalize(components::adc_component_helper!(nrf52833::adc::Adc))
+            components::adc::AdcComponent::new(
+                &adc_mux,
+                nrf52833::adc::AdcChannelSetup::new(nrf52833::adc::AdcChannel::AnalogInput2)
+            )
+            .finalize(components::adc_component_helper!(nrf52833::adc::Adc))
         ),
     );
-
+    let analog_comparator = components::analog_comparator::AcComponent::new(
+        &base_peripherals.acomp,
+        components::acomp_component_helper!(
+            nrf52833::acomp::Channel,
+            &nrf52833::acomp::CHANNEL_AC0
+        ),
+    )
+    .finalize(components::acomp_component_buf!(
+        nrf52833::acomp::Comparator
+    ));
     //--------------------------------------------------------------------------
     // STORAGE
     //--------------------------------------------------------------------------
@@ -340,12 +373,33 @@ pub unsafe fn reset_handler() {
         nrf52_components::BLEComponent::new(board_kernel, &base_peripherals.ble_radio, mux_alarm)
             .finalize(());
 
+    //--------------------------------------------------------------------------
+    // LEDs
+    //--------------------------------------------------------------------------
+    let led = components::led::LedsComponent::new(components::led_component_helper!(
+        LedHigh<'static,nrf52833::gpio::GPIOPin>,
+        LedHigh::new(&nrf52833_peripherals.gpio_port[LED_RED_PIN]),
+        LedHigh::new(&nrf52833_peripherals.gpio_port[LED_GREEN_PIN]),
+        LedHigh::new(&nrf52833_peripherals.gpio_port[LED_BLUE_PIN]),
+    ))
+    .finalize(components::led_component_buf!(
+        LedHigh<'static,nrf52833::gpio::GPIOPin>
+    ));
+
+    //--------------------------------------------------------------------------
+    // Process Console
+    //--------------------------------------------------------------------------
+    let pconsole =
+        components::process_console::ProcessConsoleComponent::new(board_kernel, uart_mux)
+            .finalize(());
+
 
     //--------------------------------------------------------------------------
     // FINAL SETUP AND BOARD BOOT
     //--------------------------------------------------------------------------
 
     // it seems that microbit v2 has no external clock
+    nrf52_components::NrfClockComponent::new(&base_peripherals.clock).finalize(());;
     base_peripherals.clock.low_stop();
     base_peripherals.clock.high_stop();
     base_peripherals.clock.low_start();
@@ -355,25 +409,28 @@ pub unsafe fn reset_handler() {
 
     let platform = Platform {
         ble_radio: ble_radio,
+        pconsole,
         console: console,
-        gpio: gpio,
         button: button,
         led: led,
+        gpio,
+        temperature,
+        analog_comparator,
         rng: rng,
         adc: adc_syscall,
         alarm: alarm,
         app_flash: app_flash,
         ipc: kernel::ipc::IPC::new(board_kernel, &memory_allocation_capability),
     };
-
+    platform.pconsole.start();
     let chip = static_init!(
         nrf52833::chip::NRF52<Nrf52833DefaultPeripherals>,
         nrf52833::chip::NRF52::new(nrf52833_peripherals)
     );
     CHIP = Some(chip);
-
+    //platform.process_console.start();
     debug!("Initialization complete. Entering main loop.");
-
+    debug!("{}",&nrf52833::ficr::FICR_INSTANCE);
     //--------------------------------------------------------------------------
     // PROCESSES AND MAIN LOOP
     //--------------------------------------------------------------------------

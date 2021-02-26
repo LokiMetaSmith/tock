@@ -1,22 +1,28 @@
 use core::fmt::Write;
 use core::panic::PanicInfo;
-
 use cortexm4;
 use kernel::debug;
 use kernel::debug::IoWrite;
 use kernel::hil::led;
-use kernel::hil::uart;
-use nrf52833::gpio::{self, Pin};
+use kernel::hil::uart::{self, Configure};
+use nrf52833::gpio::Pin;
+//use kernel::hil::uart;
+//use nrf52833::gpio::{self, Pin};
 
-use kernel::hil::gpio::{Configure, Input, Output};
+//use kernel::hil::gpio::{Configure, Input, Output};
 
 use crate::CHIP;
 use crate::PROCESSES;
 
 /// Writer is used by kernel::debug to panic message to the serial port.
-pub struct Writer {
+struct Writer {
     initialized: bool,
 }
+
+
+/// Global static for debug writer
+static mut WRITER: Writer = Writer { initialized: false };
+
 
 impl Writer {
     /// Indicate that USART has already been initialized.
@@ -24,9 +30,6 @@ impl Writer {
         self.initialized = true;
     }
 }
-
-/// Global static for debug writer
-pub static mut WRITER: Writer = Writer { initialized: false };
 
 impl Write for Writer {
     fn write_str(&mut self, s: &str) -> ::core::fmt::Result {
@@ -51,40 +54,16 @@ impl IoWrite for Writer {
                 width: uart::Width::Eight,
             });
         }
-
-        unsafe {
-            for &c in buf {
+        for &c in buf {
+            unsafe {
                 uart.send_byte(c);
-                while !uart.tx_ready() {}
             }
+            while !uart.tx_ready() {}
         }
     }
 }
 
-struct MatrixLed(
-    &'static gpio::GPIOPin<'static>,
-    &'static gpio::GPIOPin<'static>,
-);
 
-impl led::Led for MatrixLed {
-    fn init(&mut self) {
-        self.0.make_output();
-        self.1.make_output();
-        self.1.clear();
-    }
-    fn on(&mut self) {
-        self.1.set();
-    }
-    fn off(&mut self) {
-        self.1.clear();
-    }
-    fn toggle(&mut self) {
-        self.1.toggle();
-    }
-    fn read(&self) -> bool {
-        self.1.read()
-    }
-}
 
 /// Default panic handler for the microbit board.
 ///
@@ -97,9 +76,8 @@ pub unsafe extern "C" fn panic_fmt(pi: &PanicInfo) -> ! {
     // let mut led = Led (&gpio::PORT[Pin::P0_28], );
 
     // MicroBit v2 has a microphone LED, use it for panic
-    const LED_KERNEL_PIN: Pin = Pin::P0_20;
-    let led = &mut led::LedHigh::new(&nrf52833::gpio::PORT[LED_KERNEL_PIN]);
-    // MatrixLed(&gpio::PORT[Pin::P0_28], &gpio::PORT[Pin::P0_21]);
+    let led_kernel_pin = &nrf52833::gpio::GPIOPin::new(Pin::P0_24);
+    let led = &mut led::LedLow::new(led_kernel_pin);
     let writer = &mut WRITER;
     debug::panic(
         &mut [led],
