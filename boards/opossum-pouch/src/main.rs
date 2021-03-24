@@ -8,32 +8,32 @@
 #![cfg_attr(not(doc), no_main)]
 #![deny(missing_docs)]
 
-use capsules::virtual_aes_ccm::MuxAES128CCM;
+//use capsules::virtual_aes_ccm::MuxAES128CCM;
 use capsules::virtual_alarm::VirtualMuxAlarm;
 use kernel::common::dynamic_deferred_call::{DynamicDeferredCall, DynamicDeferredCallClientState};
 use kernel::component::Component;
-use kernel::hil::gpio::Configure;
-use kernel::hil::gpio::Interrupt;
-use kernel::hil::gpio::Output;
+//use kernel::hil::gpio::Configure;
+//use kernel::hil::gpio::Interrupt;
+//use kernel::hil::gpio::Output;
 //use kernel::hil::i2c::I2CMaster;
 use kernel::hil::led::LedHigh;
-use kernel::hil::symmetric_encryption::AES128;
+//use kernel::hil::symmetric_encryption::AES128;
 use kernel::hil::time::Counter;
-use kernel::hil::usb::Client;
-use kernel::mpu::MPU;
-use kernel::Chip;
+//use kernel::hil::usb::Client;
+//use kernel::mpu::MPU;
+//use kernel::Chip;
 #[allow(unused_imports)]
 use kernel::{capabilities, create_capability, debug, debug_gpio, debug_verbose, static_init};
 use nrf52833::gpio::Pin;
-use nrf52833::base_interrupts::PWM0;
+//use nrf52833::base_interrupts::PWM0;
 use nrf52833::interrupt_service::Nrf52833DefaultPeripherals;
-use nrf52_components::{self, UartChannel, UartPins};
+//use nrf52_components::{self, UartChannel, UartPins};
 
 // Kernel LED (same as microphone LED)
 const LED_KERNEL_PIN: Pin = Pin::P0_24;
 const LED_RED_PIN: Pin = Pin::P0_24;
-const LED_GREEN_PIN: Pin = Pin::P0_25;
-const LED_BLUE_PIN: Pin = Pin::P0_21;
+//const LED_GREEN_PIN: Pin = Pin::P0_25;
+//const LED_BLUE_PIN: Pin = Pin::P0_21;
 
 const SWITCH: Pin = Pin::P0_11;
 
@@ -41,7 +41,7 @@ const SWITCH: Pin = Pin::P0_11;
 const FLT: Pin = Pin::P0_13;
 const PGOOD: Pin = Pin::P0_16;
 const DEVSLP: Pin = Pin::P0_14;
-const IMON: Pin = Pin::P0_02;
+//const IMON: Pin = Pin::P0_02;
 // GPIOs
 
 // P0, P1 and P2 are used as ADC, comment them in the ADC section to use them as GPIO
@@ -55,8 +55,8 @@ const IMON: Pin = Pin::P0_02;
 const UART_TX_PIN: Pin = Pin::P0_25;
 const UART_RX_PIN: Pin = Pin::P0_21;
 
-const SRC_MAC: u16 = 0xDEAD;
-const PAN_ID:  u16 = 0xBEEF;
+//const SRC_MAC: u16 = 0xDEAD;
+//const PAN_ID:  u16 = 0xBEEF;
 
 /// LED matrix
 //const LED_MATRIX_COLS: [Pin; 5] = [Pin::P0_28, Pin::P0_11, Pin::P0_31, Pin::P1_05, Pin::P0_30];
@@ -183,7 +183,7 @@ pub unsafe fn reset_handler() {
         create_capability!(capabilities::ProcessManagementCapability);
     let main_loop_capability = create_capability!(capabilities::MainLoopCapability);
     let memory_allocation_capability = create_capability!(capabilities::MemoryAllocationCapability);
-    let gpio_port = &nrf52833_peripherals.gpio_port;
+//    let gpio_port = &nrf52833_peripherals.gpio_port;
     //--------------------------------------------------------------------------
     // DEBUG GPIO
     //--------------------------------------------------------------------------
@@ -206,13 +206,16 @@ pub unsafe fn reset_handler() {
         components::gpio_component_helper!(
             nrf52833::gpio::GPIOPin,
             // Used as ADC, comment them out in the ADC section to use them as GPIO
+            13 => &nrf52833_peripherals.gpio_port[FLT], //Pin::P0_13
+            16 => &nrf52833_peripherals.gpio_port[PGOOD], //Pin::P0_16
+            14 => &nrf52833_peripherals.gpio_port[DEVSLP], //Pin = Pin::P0_14
             // 0 => &nrf52833_peripherals.gpio_port[Pin::P0_0],
             // 1 => &nrf52833_peripherals.gpio_port[Pin::P0_1],
             // 2 => &nrf52833_peripherals.gpio_port[Pin::P0_2],
-	        11 => &nrf52833_peripherals.gpio_port[Pin::P0_11],
-            13 => &nrf52833_peripherals.gpio_port[Pin::P0_13],
-            16 => &nrf52833_peripherals.gpio_port[Pin::P0_16],
-            14 => &nrf52833_peripherals.gpio_port[Pin::P0_14],
+	        //11 => &nrf52833_peripherals.gpio_port[Pin::P0_11],
+
+            //16 => &nrf52833_peripherals.gpio_port[Pin::P0_16],
+            //14 => &nrf52833_peripherals.gpio_port[Pin::P0_14],
             //8 => &nrf52833_peripherals.gpio_port[Pin::P0_8],
             //9 => &nrf52833_peripherals.gpio_port[Pin::P0_9],
             //16 => &nrf52833_peripherals.gpio_port[Pin::P0_16],
@@ -263,12 +266,12 @@ pub unsafe fn reset_handler() {
     // PWM & BUZZER
     //--------------------------------------------------------------------------
 
-    use kernel::hil::time::Alarm;
+//    use kernel::hil::time::Alarm;
 
-    let mux_pwm = static_init!(
-        capsules::virtual_pwm::MuxPwm<'static, nrf52::pwm::Pwm>,
-        capsules::virtual_pwm::MuxPwm::new(&base_peripherals.pwm0)
-    );
+//    let mux_pwm = static_init!(
+//        capsules::virtual_pwm::MuxPwm<'static, nrf52::pwm::Pwm>,
+//        capsules::virtual_pwm::MuxPwm::new(&base_peripherals.pwm0)
+//    );
 
 
 
@@ -317,29 +320,13 @@ pub unsafe fn reset_handler() {
     // Comment out the following to use P0, P1 and P2 as GPIO
     let adc_syscall = components::adc::AdcVirtualComponent::new(board_kernel).finalize(
         components::adc_syscall_component_helper!(
-            // ADC Ring 0 (P0)
-            //components::adc::AdcComponent::new(
-            //    &adc_mux,
-            //    nrf52833::adc::AdcChannel::AnalogInput0
-            //)
-            //.finalize(components::adc_component_helper!(nrf52833::adc::Adc)),
+            // ADC IMON ADC0,
             components::adc::AdcComponent::new(
                 &adc_mux,
                 nrf52833::adc::AdcChannelSetup::new(nrf52833::adc::AdcChannel::AnalogInput0)
             )
             .finalize(components::adc_component_helper!(nrf52833::adc::Adc)),
-            // ADC Ring 1 (P1)
-            components::adc::AdcComponent::new(
-                &adc_mux,
-                nrf52833::adc::AdcChannelSetup::new(nrf52833::adc::AdcChannel::AnalogInput1)
-            )
-            .finalize(components::adc_component_helper!(nrf52833::adc::Adc)),
-            // ADC Ring 2 (P2)
-            components::adc::AdcComponent::new(
-                &adc_mux,
-                nrf52833::adc::AdcChannelSetup::new(nrf52833::adc::AdcChannel::AnalogInput2)
-            )
-            .finalize(components::adc_component_helper!(nrf52833::adc::Adc))
+
         ),
     );
     let analog_comparator = components::analog_comparator::AcComponent::new(
@@ -352,6 +339,32 @@ pub unsafe fn reset_handler() {
     .finalize(components::acomp_component_buf!(
         nrf52833::acomp::Comparator
     ));
+
+    // IMON current monitor
+
+//    let adc_current_monitor = components::adc::AdcMicrophoneComponen::new().finalize(
+//        components::adc_microphone_component_helper!(
+//            // adc
+//            nrf52833::adc::Adc,
+//            // adc channel
+//            nrf52833::adc::AdcChannelSetup::setup(
+//                nrf52833::adc::AdcChannel::AnalogInput3,
+//                nrf52833::adc::AdcChannelGain::Gain4,
+//                nrf52833::adc::AdcChannelResistor::Bypass,
+//                nrf52833::adc::AdcChannelResistor::Pulldown,
+//                nrf52833::adc::AdcChannelSamplingTime::us3
+//            ),
+//            // adc mux
+//            adc_mux,
+//            // buffer size
+//            50,
+//            // gpio
+//            nrf52833::gpio::GPIOPin,
+//            // optional gpio pin
+//            Some(&nrf52833_peripherals.gpio_port[IMON])
+//        ),
+//    );
+
     //--------------------------------------------------------------------------
     // STORAGE
     //--------------------------------------------------------------------------
@@ -379,8 +392,8 @@ pub unsafe fn reset_handler() {
     let led = components::led::LedsComponent::new(components::led_component_helper!(
         LedHigh<'static,nrf52833::gpio::GPIOPin>,
         LedHigh::new(&nrf52833_peripherals.gpio_port[LED_RED_PIN]),
-        LedHigh::new(&nrf52833_peripherals.gpio_port[LED_GREEN_PIN]),
-        LedHigh::new(&nrf52833_peripherals.gpio_port[LED_BLUE_PIN]),
+//        LedHigh::new(&nrf52833_peripherals.gpio_port[LED_GREEN_PIN]),
+//        LedHigh::new(&nrf52833_peripherals.gpio_port[LED_BLUE_PIN]),
     ))
     .finalize(components::led_component_buf!(
         LedHigh<'static,nrf52833::gpio::GPIOPin>
@@ -399,7 +412,7 @@ pub unsafe fn reset_handler() {
     //--------------------------------------------------------------------------
 
     // it seems that microbit v2 has no external clock
-    nrf52_components::NrfClockComponent::new(&base_peripherals.clock).finalize(());;
+    nrf52_components::NrfClockComponent::new(&base_peripherals.clock).finalize(());
     base_peripherals.clock.low_stop();
     base_peripherals.clock.high_stop();
     base_peripherals.clock.low_start();

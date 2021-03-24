@@ -24,12 +24,12 @@ struct Writer {
 static mut WRITER: Writer = Writer { initialized: false };
 
 
-impl Writer {
-    /// Indicate that USART has already been initialized.
-    pub fn set_initialized(&mut self) {
-        self.initialized = true;
-    }
-}
+//impl Writer {
+//    /// Indicate that USART has already been initialized.
+//    pub fn set_initialized(&mut self) {
+//        self.initialized = true;
+//    }
+//}
 
 impl Write for Writer {
     fn write_str(&mut self, s: &str) -> ::core::fmt::Result {
@@ -42,7 +42,7 @@ impl IoWrite for Writer {
     fn write(&mut self, buf: &[u8]) {
         let uart = nrf52833::uart::Uarte::new();
 
-        use kernel::hil::uart::Configure;
+        //use kernel::hil::uart::Configure;
 
         if !self.initialized {
             self.initialized = true;
@@ -77,7 +77,7 @@ pub unsafe extern "C" fn panic_fmt(pi: &PanicInfo) -> ! {
 
     // MicroBit v2 has a microphone LED, use it for panic
     let led_kernel_pin = &nrf52833::gpio::GPIOPin::new(Pin::P0_24);
-    let led = &mut led::LedLow::new(led_kernel_pin);
+    let led = &mut led::LedHigh::new(led_kernel_pin);
     let writer = &mut WRITER;
     debug::panic(
         &mut [led],
